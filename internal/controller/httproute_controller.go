@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,29 +22,15 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-// HTTPRouteReconciler reconciles a HTTPRoute object
 type HTTPRouteReconciler struct {
 	client.Client
 	Scheme    *runtime.Scheme
 	Namespace string
 }
 
-// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gatewayclasses,verbs=get
-// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=list
-// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=list;watch
-// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get
-
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.18.2/pkg/reconcile
-//
-//nolint:gocyclo
 func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	// TODO delete DNS records. load all hostnames via tunnel ID in comment? but can't get DNS zone...
 	target := &gatewayv1.HTTPRoute{}
 	gateways := []gatewayv1.Gateway{}
 	hostnames := []gatewayv1.Hostname{}
@@ -82,7 +69,6 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	for _, gateway := range gateways {
-		// check target is in scope
 		gatewayClass := &gatewayv1.GatewayClass{}
 		if err := r.Get(ctx, types.NamespacedName{
 			Name: string(gateway.Spec.GatewayClassName),
@@ -95,7 +81,6 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			continue
 		}
 
-		// search for sibling routes
 		siblingRoutes := []gatewayv1.HTTPRoute{}
 		for _, searchRoute := range routes.Items {
 			for _, searchParent := range searchRoute.Spec.ParentRefs {
@@ -110,7 +95,6 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 		}
 
-		// fan out to siblings
 		ingress := []zero_trust.TunnelConfigurationUpdateParamsConfigIngress{}
 		for _, route := range siblingRoutes {
 			for _, rule := range route.Spec.Rules {
@@ -127,7 +111,6 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 					}
 				}
 
-				// TODO implement this with rewrite rules? Core filters are a MUST in the spec
 				if rule.Filters != nil {
 					log.Info("HTTPRoute filters are not supported", rule.Filters)
 				}
@@ -150,7 +133,6 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 					services[fmt.Sprintf("http://%s.%s:%d", string(backend.Name), namespace, int32(*backend.Port))] = true
 				}
 
-				// product of hostname, path, service
 				for _, hostname := range route.Spec.Hostnames {
 					for path := range paths {
 						for service := range services {
@@ -165,12 +147,16 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 		}
 
-		// last rule must be the catch-all
+		log.Info("Ingress rules before sorting", "count", len(ingress), "rules", ingress)
+
+		sortIngressByPathSpecificity(ingress)
+
+		log.Info("Ingress rules after sorting", "count", len(ingress), "rules", ingress)
+
 		ingress = append(ingress, zero_trust.TunnelConfigurationUpdateParamsConfigIngress{
 			Service: cloudflare.String("http_status:404"),
 		})
 
-		// increment AttachedRoutes in each gateway listener status
 		gatewayObj := &gatewayv1.Gateway{}
 		gatewayRef := types.NamespacedName{
 			Namespace: gateway.Namespace,
@@ -228,7 +214,6 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		log.Info("Updated Tunnel configuration", "ingress", ingress)
 
-		// duplicate CNAMEs can't exist, so the last parentRef wins
 		for _, gwHostname := range hostnames {
 			hostname := string(gwHostname)
 			zoneID, err := FindZoneID(hostname, ctx, api, account)
@@ -282,7 +267,6 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
-// SetupWithManager sets up the controller with the Manager.
 func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	pred := predicate.GenerationChangedPredicate{}
 	return ctrl.NewControllerManagedBy(mgr).
@@ -311,4 +295,31 @@ func FindZoneID(hostname string, ctx context.Context, api *cloudflare.Client, ac
 	err := errors.New("failed to discover DNS zone")
 	log.Error(err, "Failed to discover parent DNS zone. Ensure Zone.DNS permission is configured", "hostname", hostname)
 	return "", err
+}
+
+// sortIngressByPathSpecificity sorts ingress rules by path specificity.
+func sortIngressByPathSpecificity(ingress []zero_trust.TunnelConfigurationUpdateParamsConfigIngress) {
+	sort.SliceStable(ingress, func(i, j int) bool {
+		pathI := fmt.Sprintf("%v", ingress[i].Path)
+		pathJ := fmt.Sprintf("%v", ingress[j].Path)
+
+		pathI = strings.Trim(pathI, "\"")
+		pathJ = strings.Trim(pathJ, "\"")
+
+		cleanPathI := strings.TrimSuffix(pathI, "/*")
+		cleanPathJ := strings.TrimSuffix(pathJ, "/*")
+
+		// If base paths have different lengths, longer comes first
+		if len(cleanPathI) != len(cleanPathJ) {
+			return len(cleanPathI) > len(cleanPathJ)
+		}
+
+		isWildcardI := strings.HasSuffix(pathI, "/*")
+		isWildcardJ := strings.HasSuffix(pathJ, "/*")
+		if isWildcardI != isWildcardJ {
+			return !isWildcardI // non-wildcard (false) comes first
+		}
+
+		return pathI < pathJ
+	})
 }
