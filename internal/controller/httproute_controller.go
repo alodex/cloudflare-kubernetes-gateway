@@ -91,7 +91,7 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 
-		if gatewayClass.Spec.ControllerName != "github.com/pl4nty/cloudflare-kubernetes-gateway" {
+		if gatewayClass.Spec.ControllerName != "github.com/alodex/cloudflare-kubernetes-gateway" {
 			continue
 		}
 
@@ -237,7 +237,7 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 
 			content := fmt.Sprintf("%s.cfargotunnel.com", tunnel.ID)
-			comment := "Managed by github.com/pl4nty/cloudflare-kubernetes-gateway"
+			comment := "Managed by github.com/alodex/cloudflare-kubernetes-gateway"
 			records, _ := api.DNS.Records.List(ctx, dns.RecordListParams{
 				ZoneID:  cloudflare.String(zoneID),
 				Proxied: cloudflare.Bool(true),

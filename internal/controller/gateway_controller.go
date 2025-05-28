@@ -31,7 +31,7 @@ import (
 
 const gatewayClassFinalizer = "cfargotunnel.com/finalizer"
 const gatewayFinalizer = "cfargotunnel.com/finalizer"
-const controllerName = "github.com/pl4nty/cloudflare-kubernetes-gateway"
+const controllerName = "github.com/alodex/cloudflare-kubernetes-gateway"
 
 // GatewayReconciler reconciles a Gateway object
 type GatewayReconciler struct {
