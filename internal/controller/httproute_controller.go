@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -165,6 +166,12 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 		}
 
+		log.Info("Routes before sorting", "ingress", ingress)
+
+		sortIngressByPathSpecificity(ingress)
+
+		log.Info("Routes after sorting", "ingress", ingress)
+
 		// last rule must be the catch-all
 		ingress = append(ingress, zero_trust.TunnelConfigurationUpdateParamsConfigIngress{
 			Service: cloudflare.String("http_status:404"),
@@ -289,6 +296,26 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&gatewayv1.HTTPRoute{}).
 		WithEventFilter(pred).
 		Complete(r)
+}
+
+// sortIngressByPathSpecificity sorts ingress routes by path specificity
+func sortIngressByPathSpecificity(ingress []zero_trust.TunnelConfigurationUpdateParamsConfigIngress) {
+	sort.SliceStable(ingress, func(i, j int) bool {
+		pathI := ""
+		if ingress[i].Path.Value != "" {
+			pathI = ingress[i].Path.Value
+		}
+
+		pathJ := ""
+		if ingress[j].Path.Value != "" {
+			pathJ = ingress[j].Path.Value
+		}
+
+		if len(pathI) != len(pathJ) {
+			return len(pathI) > len(pathJ)
+		}
+		return pathI < pathJ
+	})
 }
 
 func FindZoneID(hostname string, ctx context.Context, api *cloudflare.Client, accountID string) (string, error) {
