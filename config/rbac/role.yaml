@@ -49,10 +49,3 @@ rules:
   - gateways/status
   verbs:
   - update
-- apiGroups:
-  - gateway.networking.k8s.io
-  resources:
-  - httproutes
-  verbs:
-  - list
-  - watch
