@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -165,6 +166,12 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 		}
 
+		log.Info("Ingress routes before sorting", "count", len(ingress), "ingress", ingress)
+
+		sortIngressByPathSpecificity(ingress)
+
+		log.Info("Ingress routes after sorting", "count", len(ingress), "ingress", ingress)
+
 		// last rule must be the catch-all
 		ingress = append(ingress, zero_trust.TunnelConfigurationUpdateParamsConfigIngress{
 			Service: cloudflare.String("http_status:404"),
@@ -289,6 +296,56 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&gatewayv1.HTTPRoute{}).
 		WithEventFilter(pred).
 		Complete(r)
+}
+
+// sortIngressByPathSpecificity sorts ingress entries by path specificity
+func sortIngressByPathSpecificity(ingress []zero_trust.TunnelConfigurationUpdateParamsConfigIngress) {
+	sort.Slice(ingress, func(i, j int) bool {
+		pathA := extractPathSafely(ingress[i])
+		pathB := extractPathSafely(ingress[j])
+
+		lenA := getEffectivePathLength(pathA)
+		lenB := getEffectivePathLength(pathB)
+
+		return lenA > lenB
+	})
+}
+
+func extractPathSafely(ingress zero_trust.TunnelConfigurationUpdateParamsConfigIngress) string {
+	path := ""
+
+	defer func() {
+		if r := recover(); r != nil {
+			path = ""
+		}
+	}()
+
+	pathStr := fmt.Sprintf("%v", ingress)
+
+	slashIndex := strings.Index(pathStr, "/")
+	if slashIndex >= 0 {
+		endChars := " ,}"
+		endIndex := len(pathStr)
+		for _, char := range endChars {
+			pos := strings.IndexRune(pathStr[slashIndex:], char)
+			if pos >= 0 && slashIndex+pos < endIndex {
+				endIndex = slashIndex + pos
+			}
+		}
+
+		path = pathStr[slashIndex:endIndex]
+
+		path = strings.Trim(path, "\"")
+	}
+
+	return path
+}
+
+func getEffectivePathLength(path string) int {
+	if wildcardIndex := strings.Index(path, "*"); wildcardIndex != -1 {
+		return wildcardIndex
+	}
+	return len(path)
 }
 
 func FindZoneID(hostname string, ctx context.Context, api *cloudflare.Client, accountID string) (string, error) {
