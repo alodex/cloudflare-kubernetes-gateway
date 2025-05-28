@@ -26,7 +26,8 @@ jobs:
       - uses: actions/setup-go@v5.2.0
         with:
           go-version: stable
-
+      
+      - run: go clean -modcache && go mod download && go mod tidy
       - run: make lint test
 
   e2e:
