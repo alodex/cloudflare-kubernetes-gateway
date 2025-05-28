@@ -106,7 +106,7 @@ func (r *GatewayClassReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gatewayv1.GatewayClass{
 			Spec: gatewayv1.GatewayClassSpec{
-				ControllerName: "github.com/pl4nty/cloudflare-kubernetes-gateway",
+				ControllerName: "github.com/alodex/cloudflare-kubernetes-gateway",
 			},
 		}).
 		WithEventFilter(pred).

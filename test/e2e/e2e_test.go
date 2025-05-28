@@ -9,7 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/pl4nty/cloudflare-kubernetes-gateway/test/utils"
+	"github.com/alodex/cloudflare-kubernetes-gateway/test/utils"
 )
 
 const namespace = "cloudflare-gateway"
